@@ -1,0 +1,127 @@
+<policies>
+    <inbound>
+        <base />
+        <!--
+            Document Intelligence API Policy (Modern API: /documentintelligence)
+            Purpose: Routes requests to appropriate Document Intelligence backends based on operation and availability
+            
+            Flow:
+            1. Validate Entra ID authentication (optional, controlled by entra-validate named value)
+            2. Extract and validate operation parameter (modelId/classifierId) from request
+            3. Configure backend pools and routing rules (dynamically generated from DI backend onboarding)
+            4. Determine target backend based on operation and availability
+            5. Set up managed identity authentication and route to selected backend
+            6. Collect usage metrics for monitoring and billing
+            
+            Configuration:
+            - Backend pool definitions are in set-di-backend-pools-modern fragment
+            - Uses validate-routes fragment for backend health checking
+            - Uses backend-routing fragment for actual request forwarding
+        -->
+        
+        <!-- Step 1: Validate Entra ID authentication (if enabled) -->
+        <include-fragment fragment-id="aad-auth" />
+        
+        <!-- Remove api-key header to prevent it from being passed to backend endpoints -->
+        <set-header name="api-key" exists-action="delete" />
+        
+        <!-- Step 2: Extract and validate operation parameter from request -->
+        <include-fragment fragment-id="set-target-di-backend-pool" />
+        
+        <!-- Step 3: Load backend pool configurations (if not cached) -->
+        <choose>
+            <when condition="@(context.Variables.ContainsKey("oaClusters") == false)">
+                <include-fragment fragment-id="set-di-backend-pools-modern" />
+            </when>
+        </choose>
+        
+        <!-- Step 4: Validate routes and select available backend -->
+        <include-fragment fragment-id="validate-routes" />
+        
+        <!-- Step 5: Configure managed identity authentication and route to selected backend -->
+        <include-fragment fragment-id="set-di-backend-authorization" />
+    </inbound>
+    <backend>
+        <include-fragment fragment-id="backend-routing" />
+    </backend>
+    <outbound>
+        <base />
+        <set-variable name="idPrefix" value="doc-Intel" />
+        <set-variable name="targetService" value="AI-Document-Intelligence" />
+        <set-variable name="model" value="@((string)context.Variables.GetValueOrDefault<string>("deployment-id", "AI-Document-Intelligence-Model"))" />
+        <set-variable name="deploymentName" value="@((string)context.Variables.GetValueOrDefault<string>("deployment-id", "AI-DOCUMENT-INTELLIGENCE"))" />
+
+        <!-- Store original response body -->
+        <set-variable name="responseBody" value="@(context.Response.Body.As<string>())" />
+
+        <!-- Attempt to parse JSON and set variables -->
+        <set-variable name="isValidJson" value="@{
+            try 
+            {
+                var responseJson = JObject.Parse((string)context.Variables["responseBody"]);
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }" />
+
+        <choose>
+            <when condition="@((bool)context.Variables["isValidJson"])">
+                <set-variable name="numberOfPages" value="@{
+                    try 
+                    {
+                        var parsedBody = (JObject)context.Variables["parsedBody"];
+                        var pages = parsedBody.SelectToken("analyzeResult.pages");
+                        return pages != null ? pages.Count() : 1;
+                    }
+                    catch
+                    {
+                        return 1;
+                    }
+                }" />
+
+                <set-variable name="modelId" value="@{
+                    try 
+                    {
+                        var parsedBody = (JObject)context.Variables["parsedBody"];
+                        var modelId = parsedBody.SelectToken("analyzeResult.modelId");
+                        return modelId != null ? modelId.ToString() : "Document-Intelligence";
+                    }
+                    catch
+                    {
+                        return "Document-Intelligence";
+                    }
+                }" />
+            </when>
+        </choose>
+
+        <!-- Add dynamic header transformation -->
+        <set-header name="operation-location" exists-action="override">
+            <value>@{
+                var originalLocation = context.Response.Headers.GetValueOrDefault("operation-location","");
+                if (!string.IsNullOrEmpty(originalLocation)) {
+                    var uri = new Uri(originalLocation);
+                    return originalLocation.Replace(
+                        uri.Host,
+                        context.Request.OriginalUrl.Host
+                    );
+                }
+                return originalLocation;
+            }</value>
+        </set-header>
+
+        <include-fragment fragment-id="ai-usage" />
+
+        <!-- Return response body -->
+        <set-body>@((string)context.Variables["responseBody"])</set-body>
+    </outbound>
+    <on-error>
+        <base />
+        <set-variable name="service-name" value="Azure Document Intelligence" />
+        <set-variable name="target-deployment" value="@((string)context.Variables.GetValueOrDefault<string>("deployment-id", "AI-Document-Intelligence-Model"))" />
+        
+        <!-- <include-fragment fragment-id="throttling-events" /> -->
+    </on-error>
+</policies>
