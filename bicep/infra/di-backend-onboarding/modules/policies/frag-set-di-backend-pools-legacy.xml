@@ -1,0 +1,25 @@
+<fragment>
+    <set-variable name="oaClusters" value="@{
+        // route is an Azure Document Intelligence endpoint
+        JArray routes = new JArray();
+
+        // cluster is a group of routes that are capable of serving a specific operation
+        JArray clusters = new JArray();
+
+        // Update the below if condition when using multiple APIM gateway regions/SHGW to get different configurations for each region
+        if(context.Deployment.Region == "ALL" || true)
+        {
+            // Adding all Azure Document Intelligence endpoints routes (which are set as APIM Backend)
+            // The following code is dynamically generated based on backend pool configuration
+            //{backendPoolsCode}
+        }
+        else
+        {
+            //No clusters found for selected region, either return error (default behavior) or set default cluster in the else section
+        }
+        
+        return clusters;   
+    }" />
+    <!-- Add cluster configurations to cache -->
+    <cache-store-value key="@((string)context.Variables.GetValueOrDefault<string>("oaClustersCacheKey", "ALL-DOCINTELL-LEGACY"))" value="@((JArray)context.Variables["oaClusters"])" duration="86400" />
+</fragment>

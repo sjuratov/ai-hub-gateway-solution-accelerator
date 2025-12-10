@@ -1,0 +1,616 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2018-05-01/subscriptionDeploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "_generator": {
+      "name": "bicep",
+      "version": "0.39.26.7824",
+      "templateHash": "8126120132189865171"
+    }
+  },
+  "parameters": {
+    "apim": {
+      "type": "object",
+      "metadata": {
+        "description": "APIM resource coordinates for the existing API Management instance"
+      }
+    },
+    "apimManagedIdentity": {
+      "type": "object",
+      "metadata": {
+        "description": "User-assigned managed identity resource coordinates for APIM authentication"
+      }
+    },
+    "diBackendConfig": {
+      "type": "array",
+      "metadata": {
+        "description": "  Each backend object should have:\r\n  - backendId: Unique identifier (used in APIM backend resource name)\r\n  - endpoint: Base URL of the Document Intelligence service (e.g., https://my-di-eastus.cognitiveservices.azure.com/)\r\n  - location: Azure region where the DI instance is deployed\r\n  - authScheme: 'managedIdentity' | 'apiKey' | 'token'\r\n  - supportedOperations: Array of operation objects, each with:\r\n    - name: Operation name (required, e.g., 'prebuilt-read', 'prebuilt-invoice')\r\n    - capability: (Optional) Capability description, default to operation name\r\n  - apiVersions: Array of API versions to support: ['legacy', 'modern'] or subset\r\n  - priority: (Optional) 1-5, default 1 (lower = higher priority)\r\n  - weight: (Optional) 1-1000, default 100 (higher = more traffic)\r\n  ",
+        "example": [
+          {
+            "backendId": "di-eastus-primary",
+            "endpoint": "https://my-di-eastus.cognitiveservices.azure.com/",
+            "location": "eastus",
+            "authScheme": "managedIdentity",
+            "supportedOperations": [
+              {
+                "name": "prebuilt-read",
+                "capability": "OCR"
+              },
+              {
+                "name": "prebuilt-layout",
+                "capability": "Layout Analysis"
+              },
+              {
+                "name": "prebuilt-invoice",
+                "capability": "Invoice Processing"
+              }
+            ],
+            "apiVersions": [
+              "legacy",
+              "modern"
+            ],
+            "priority": 1,
+            "weight": 100
+          }
+        ]
+      }
+    },
+    "configureCircuitBreaker": {
+      "type": "bool",
+      "defaultValue": true,
+      "metadata": {
+        "description": "Whether to configure circuit breaker for backends (recommended for production)"
+      }
+    }
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "[format('di-backends-deployment-{0}', uniqueString(deployment().name))]",
+      "subscriptionId": "[parameters('apim').subscriptionId]",
+      "resourceGroup": "[parameters('apim').resourceGroupName]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "apimServiceName": {
+            "value": "[parameters('apim').name]"
+          },
+          "managedIdentityClientId": {
+            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', parameters('apimManagedIdentity').subscriptionId, parameters('apimManagedIdentity').resourceGroupName), 'Microsoft.ManagedIdentity/userAssignedIdentities', parameters('apimManagedIdentity').name), '2023-01-31').clientId]"
+          },
+          "diBackendConfig": {
+            "value": "[parameters('diBackendConfig')]"
+          },
+          "configureCircuitBreaker": {
+            "value": "[parameters('configureCircuitBreaker')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.39.26.7824",
+              "templateHash": "5082692459109069981"
+            }
+          },
+          "parameters": {
+            "apimServiceName": {
+              "type": "string",
+              "metadata": {
+                "description": "Name of the API Management service"
+              }
+            },
+            "managedIdentityClientId": {
+              "type": "string",
+              "metadata": {
+                "description": "User-assigned managed identity client ID for authentication"
+              }
+            },
+            "diBackendConfig": {
+              "type": "array",
+              "metadata": {
+                "description": "Configuration array for Document Intelligence backends"
+              }
+            },
+            "configureCircuitBreaker": {
+              "type": "bool",
+              "defaultValue": true,
+              "metadata": {
+                "description": "Whether to configure circuit breaker for backends"
+              }
+            }
+          },
+          "variables": {
+            "copy": [
+              {
+                "name": "legacyBackendIds",
+                "count": "[length(filter(parameters('diBackendConfig'), lambda('c', contains(lambdaVariables('c').apiVersions, 'legacy'))))]",
+                "input": "[format('{0}-legacy', filter(parameters('diBackendConfig'), lambda('c', contains(lambdaVariables('c').apiVersions, 'legacy')))[copyIndex('legacyBackendIds')].backendId)]"
+              },
+              {
+                "name": "modernBackendIds",
+                "count": "[length(filter(parameters('diBackendConfig'), lambda('c', contains(lambdaVariables('c').apiVersions, 'modern'))))]",
+                "input": "[format('{0}-modern', filter(parameters('diBackendConfig'), lambda('c', contains(lambdaVariables('c').apiVersions, 'modern')))[copyIndex('modernBackendIds')].backendId)]"
+              },
+              {
+                "name": "legacyBackendDetails",
+                "count": "[length(filter(parameters('diBackendConfig'), lambda('c', contains(lambdaVariables('c').apiVersions, 'legacy'))))]",
+                "input": {
+                  "backendId": "[format('{0}-legacy', filter(parameters('diBackendConfig'), lambda('c', contains(lambdaVariables('c').apiVersions, 'legacy')))[copyIndex('legacyBackendDetails')].backendId)]",
+                  "originalBackendId": "[filter(parameters('diBackendConfig'), lambda('c', contains(lambdaVariables('c').apiVersions, 'legacy')))[copyIndex('legacyBackendDetails')].backendId]",
+                  "apiVersion": "legacy",
+                  "location": "[filter(parameters('diBackendConfig'), lambda('c', contains(lambdaVariables('c').apiVersions, 'legacy')))[copyIndex('legacyBackendDetails')].location]",
+                  "resourceId": "[resourceId('Microsoft.ApiManagement/service/backends', parameters('apimServiceName'), format('{0}-legacy', filter(parameters('diBackendConfig'), lambda('c', contains(lambdaVariables('c').apiVersions, 'legacy')))[copyIndex('legacyBackendDetails')].backendId))]",
+                  "supportedOperations": "[filter(parameters('diBackendConfig'), lambda('c', contains(lambdaVariables('c').apiVersions, 'legacy')))[copyIndex('legacyBackendDetails')].supportedOperations]",
+                  "priority": "[coalesce(tryGet(filter(parameters('diBackendConfig'), lambda('c', contains(lambdaVariables('c').apiVersions, 'legacy')))[copyIndex('legacyBackendDetails')], 'priority'), 1)]",
+                  "weight": "[coalesce(tryGet(filter(parameters('diBackendConfig'), lambda('c', contains(lambdaVariables('c').apiVersions, 'legacy')))[copyIndex('legacyBackendDetails')], 'weight'), 100)]"
+                }
+              },
+              {
+                "name": "modernBackendDetails",
+                "count": "[length(filter(parameters('diBackendConfig'), lambda('c', contains(lambdaVariables('c').apiVersions, 'modern'))))]",
+                "input": {
+                  "backendId": "[format('{0}-modern', filter(parameters('diBackendConfig'), lambda('c', contains(lambdaVariables('c').apiVersions, 'modern')))[copyIndex('modernBackendDetails')].backendId)]",
+                  "originalBackendId": "[filter(parameters('diBackendConfig'), lambda('c', contains(lambdaVariables('c').apiVersions, 'modern')))[copyIndex('modernBackendDetails')].backendId]",
+                  "apiVersion": "modern",
+                  "location": "[filter(parameters('diBackendConfig'), lambda('c', contains(lambdaVariables('c').apiVersions, 'modern')))[copyIndex('modernBackendDetails')].location]",
+                  "resourceId": "[resourceId('Microsoft.ApiManagement/service/backends', parameters('apimServiceName'), format('{0}-modern', filter(parameters('diBackendConfig'), lambda('c', contains(lambdaVariables('c').apiVersions, 'modern')))[copyIndex('modernBackendDetails')].backendId))]",
+                  "supportedOperations": "[filter(parameters('diBackendConfig'), lambda('c', contains(lambdaVariables('c').apiVersions, 'modern')))[copyIndex('modernBackendDetails')].supportedOperations]",
+                  "priority": "[coalesce(tryGet(filter(parameters('diBackendConfig'), lambda('c', contains(lambdaVariables('c').apiVersions, 'modern')))[copyIndex('modernBackendDetails')], 'priority'), 1)]",
+                  "weight": "[coalesce(tryGet(filter(parameters('diBackendConfig'), lambda('c', contains(lambdaVariables('c').apiVersions, 'modern')))[copyIndex('modernBackendDetails')], 'weight'), 100)]"
+                }
+              }
+            ]
+          },
+          "resources": [
+            {
+              "copy": {
+                "name": "diBackendsLegacy",
+                "count": "[length(filter(parameters('diBackendConfig'), lambda('c', contains(lambdaVariables('c').apiVersions, 'legacy'))))]"
+              },
+              "type": "Microsoft.ApiManagement/service/backends",
+              "apiVersion": "2024-06-01-preview",
+              "name": "[format('{0}/{1}', parameters('apimServiceName'), format('{0}-legacy', filter(parameters('diBackendConfig'), lambda('c', contains(lambdaVariables('c').apiVersions, 'legacy')))[copyIndex()].backendId))]",
+              "properties": {
+                "description": "[format('Document Intelligence Backend: {0} (legacy) - {1} - Supports operations: {2}', filter(parameters('diBackendConfig'), lambda('c', contains(lambdaVariables('c').apiVersions, 'legacy')))[copyIndex()].backendId, filter(parameters('diBackendConfig'), lambda('c', contains(lambdaVariables('c').apiVersions, 'legacy')))[copyIndex()].location, join(map(filter(parameters('diBackendConfig'), lambda('c', contains(lambdaVariables('c').apiVersions, 'legacy')))[copyIndex()].supportedOperations, lambda('op', lambdaVariables('op').name)), ', '))]",
+                "url": "[if(endsWith(filter(parameters('diBackendConfig'), lambda('c', contains(lambdaVariables('c').apiVersions, 'legacy')))[copyIndex()].endpoint, '/'), format('{0}/formrecognizer', substring(filter(parameters('diBackendConfig'), lambda('c', contains(lambdaVariables('c').apiVersions, 'legacy')))[copyIndex()].endpoint, 0, sub(length(filter(parameters('diBackendConfig'), lambda('c', contains(lambdaVariables('c').apiVersions, 'legacy')))[copyIndex()].endpoint), 1))), format('{0}/formrecognizer', filter(parameters('diBackendConfig'), lambda('c', contains(lambdaVariables('c').apiVersions, 'legacy')))[copyIndex()].endpoint))]",
+                "protocol": "http",
+                "circuitBreaker": "[if(parameters('configureCircuitBreaker'), createObject('rules', createArray(createObject('failureCondition', createObject('count', 3, 'errorReasons', createArray('Server errors'), 'interval', 'PT5M', 'statusCodeRanges', createArray(createObject('min', 429, 'max', 429), createObject('min', 500, 'max', 503))), 'name', format('{0}-legacy-breaker-rule', filter(parameters('diBackendConfig'), lambda('c', contains(lambdaVariables('c').apiVersions, 'legacy')))[copyIndex()].backendId), 'tripDuration', 'PT1M', 'acceptRetryAfter', true()))), null())]",
+                "credentials": "[if(equals(filter(parameters('diBackendConfig'), lambda('c', contains(lambdaVariables('c').apiVersions, 'legacy')))[copyIndex()].authScheme, 'managedIdentity'), createObject('header', createObject('x-ms-client-id', createArray(parameters('managedIdentityClientId')))), createObject())]",
+                "tls": {
+                  "validateCertificateChain": true,
+                  "validateCertificateName": true
+                }
+              }
+            },
+            {
+              "copy": {
+                "name": "diBackendsModern",
+                "count": "[length(filter(parameters('diBackendConfig'), lambda('c', contains(lambdaVariables('c').apiVersions, 'modern'))))]"
+              },
+              "type": "Microsoft.ApiManagement/service/backends",
+              "apiVersion": "2024-06-01-preview",
+              "name": "[format('{0}/{1}', parameters('apimServiceName'), format('{0}-modern', filter(parameters('diBackendConfig'), lambda('c', contains(lambdaVariables('c').apiVersions, 'modern')))[copyIndex()].backendId))]",
+              "properties": {
+                "description": "[format('Document Intelligence Backend: {0} (modern) - {1} - Supports operations: {2}', filter(parameters('diBackendConfig'), lambda('c', contains(lambdaVariables('c').apiVersions, 'modern')))[copyIndex()].backendId, filter(parameters('diBackendConfig'), lambda('c', contains(lambdaVariables('c').apiVersions, 'modern')))[copyIndex()].location, join(map(filter(parameters('diBackendConfig'), lambda('c', contains(lambdaVariables('c').apiVersions, 'modern')))[copyIndex()].supportedOperations, lambda('op', lambdaVariables('op').name)), ', '))]",
+                "url": "[if(endsWith(filter(parameters('diBackendConfig'), lambda('c', contains(lambdaVariables('c').apiVersions, 'modern')))[copyIndex()].endpoint, '/'), format('{0}/documentintelligence', substring(filter(parameters('diBackendConfig'), lambda('c', contains(lambdaVariables('c').apiVersions, 'modern')))[copyIndex()].endpoint, 0, sub(length(filter(parameters('diBackendConfig'), lambda('c', contains(lambdaVariables('c').apiVersions, 'modern')))[copyIndex()].endpoint), 1))), format('{0}/documentintelligence', filter(parameters('diBackendConfig'), lambda('c', contains(lambdaVariables('c').apiVersions, 'modern')))[copyIndex()].endpoint))]",
+                "protocol": "http",
+                "circuitBreaker": "[if(parameters('configureCircuitBreaker'), createObject('rules', createArray(createObject('failureCondition', createObject('count', 3, 'errorReasons', createArray('Server errors'), 'interval', 'PT5M', 'statusCodeRanges', createArray(createObject('min', 429, 'max', 429), createObject('min', 500, 'max', 503))), 'name', format('{0}-modern-breaker-rule', filter(parameters('diBackendConfig'), lambda('c', contains(lambdaVariables('c').apiVersions, 'modern')))[copyIndex()].backendId), 'tripDuration', 'PT1M', 'acceptRetryAfter', true()))), null())]",
+                "credentials": "[if(equals(filter(parameters('diBackendConfig'), lambda('c', contains(lambdaVariables('c').apiVersions, 'modern')))[copyIndex()].authScheme, 'managedIdentity'), createObject('header', createObject('x-ms-client-id', createArray(parameters('managedIdentityClientId')))), createObject())]",
+                "tls": {
+                  "validateCertificateChain": true,
+                  "validateCertificateName": true
+                }
+              }
+            }
+          ],
+          "outputs": {
+            "backendIds": {
+              "type": "array",
+              "metadata": {
+                "description": "Array of created backend IDs"
+              },
+              "value": "[concat(variables('legacyBackendIds'), variables('modernBackendIds'))]"
+            },
+            "backendDetails": {
+              "type": "array",
+              "metadata": {
+                "description": "Array of backend configurations with resource IDs"
+              },
+              "value": "[concat(variables('legacyBackendDetails'), variables('modernBackendDetails'))]"
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "[format('di-backend-pools-deployment-{0}', uniqueString(deployment().name))]",
+      "subscriptionId": "[parameters('apim').subscriptionId]",
+      "resourceGroup": "[parameters('apim').resourceGroupName]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "apimServiceName": {
+            "value": "[parameters('apim').name]"
+          },
+          "backendDetails": {
+            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', parameters('apim').subscriptionId, parameters('apim').resourceGroupName), 'Microsoft.Resources/deployments', format('di-backends-deployment-{0}', uniqueString(deployment().name))), '2025-04-01').outputs.backendDetails.value]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.39.26.7824",
+              "templateHash": "10268653916415342807"
+            }
+          },
+          "parameters": {
+            "apimServiceName": {
+              "type": "string",
+              "metadata": {
+                "description": "Name of the API Management service"
+              }
+            },
+            "backendDetails": {
+              "type": "array",
+              "metadata": {
+                "description": "Array of backend details from di-backends module output"
+              }
+            }
+          },
+          "variables": {
+            "copy": [
+              {
+                "name": "normalizedBackendDetails",
+                "count": "[length(parameters('backendDetails'))]",
+                "input": {
+                  "backendId": "[parameters('backendDetails')[copyIndex('normalizedBackendDetails')].backendId]",
+                  "originalBackendId": "[parameters('backendDetails')[copyIndex('normalizedBackendDetails')].originalBackendId]",
+                  "apiVersion": "[parameters('backendDetails')[copyIndex('normalizedBackendDetails')].apiVersion]",
+                  "location": "[parameters('backendDetails')[copyIndex('normalizedBackendDetails')].location]",
+                  "resourceId": "[parameters('backendDetails')[copyIndex('normalizedBackendDetails')].resourceId]",
+                  "priority": "[parameters('backendDetails')[copyIndex('normalizedBackendDetails')].priority]",
+                  "weight": "[parameters('backendDetails')[copyIndex('normalizedBackendDetails')].weight]",
+                  "operationNames": "[map(parameters('backendDetails')[copyIndex('normalizedBackendDetails')].supportedOperations, lambda('op', lambdaVariables('op').name))]"
+                }
+              }
+            ],
+            "operationToBackendsMap": "[reduce(variables('normalizedBackendDetails'), createObject(), lambda('acc', 'backend', union(lambdaVariables('acc'), reduce(lambdaVariables('backend').operationNames, createObject(), lambda('opAcc', 'operation', union(lambdaVariables('opAcc'), createObject(format('{0}-{1}', lambdaVariables('operation'), lambdaVariables('backend').apiVersion), union(coalesce(tryGet(lambdaVariables('acc'), format('{0}-{1}', lambdaVariables('operation'), lambdaVariables('backend').apiVersion)), createArray()), createArray(createObject('backendId', lambdaVariables('backend').backendId, 'originalBackendId', lambdaVariables('backend').originalBackendId, 'apiVersion', lambdaVariables('backend').apiVersion, 'location', lambdaVariables('backend').location, 'resourceId', lambdaVariables('backend').resourceId, 'priority', lambdaVariables('backend').priority, 'weight', lambdaVariables('backend').weight))))))))))]",
+            "poolConfigs": "[map(filter(items(variables('operationToBackendsMap')), lambda('item', greater(length(lambdaVariables('item').value), 1))), lambda('item', createObject('parts', split(lambdaVariables('item').key, '-'), 'operationName', join(take(split(lambdaVariables('item').key, '-'), sub(length(split(lambdaVariables('item').key, '-')), 1)), '-'), 'apiVersion', last(split(lambdaVariables('item').key, '-')), 'poolName', format('{0}-{1}-backend-pool', join(take(split(lambdaVariables('item').key, '-'), sub(length(split(lambdaVariables('item').key, '-')), 1)), '-'), last(split(lambdaVariables('item').key, '-'))), 'backends', lambdaVariables('item').value)))]"
+          },
+          "resources": [
+            {
+              "copy": {
+                "name": "backendPools",
+                "count": "[length(variables('poolConfigs'))]"
+              },
+              "type": "Microsoft.ApiManagement/service/backends",
+              "apiVersion": "2024-06-01-preview",
+              "name": "[format('{0}/{1}', parameters('apimServiceName'), variables('poolConfigs')[copyIndex()].poolName)]",
+              "properties": {
+                "description": "[format('Backend pool for operation: {0} ({1} API)', variables('poolConfigs')[copyIndex()].operationName, variables('poolConfigs')[copyIndex()].apiVersion)]",
+                "type": "Pool",
+                "pool": {
+                  "copy": [
+                    {
+                      "name": "services",
+                      "count": "[length(variables('poolConfigs')[copyIndex()].backends)]",
+                      "input": {
+                        "id": "[format('/backends/{0}', variables('poolConfigs')[copyIndex()].backends[copyIndex('services')].backendId)]",
+                        "priority": "[variables('poolConfigs')[copyIndex()].backends[copyIndex('services')].priority]",
+                        "weight": "[variables('poolConfigs')[copyIndex()].backends[copyIndex('services')].weight]"
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          ],
+          "outputs": {
+            "poolNames": {
+              "type": "array",
+              "metadata": {
+                "description": "Array of created backend pool names"
+              },
+              "copy": {
+                "count": "[length(variables('poolConfigs'))]",
+                "input": "[variables('poolConfigs')[copyIndex()].poolName]"
+              }
+            },
+            "operationToPoolMap": {
+              "type": "object",
+              "metadata": {
+                "description": "Mapping of operations (with API version) to their backend pool names"
+              },
+              "value": "[reduce(variables('poolConfigs'), createObject(), lambda('acc', 'config', union(lambdaVariables('acc'), createObject(format('{0}-{1}', lambdaVariables('config').operationName, lambdaVariables('config').apiVersion), lambdaVariables('config').poolName))))]"
+            },
+            "operationToBackendMap": {
+              "type": "object",
+              "metadata": {
+                "description": "Mapping of operations (with API version) to backend IDs (for operations with single backend)"
+              },
+              "value": "[reduce(filter(items(variables('operationToBackendsMap')), lambda('item', equals(length(lambdaVariables('item').value), 1))), createObject(), lambda('acc', 'item', createObject('operationName', join(take(split(lambdaVariables('item').key, '-'), sub(length(split(lambdaVariables('item').key, '-')), 1)), '-'), 'apiVersion', last(split(lambdaVariables('item').key, '-')), 'return', union(lambdaVariables('acc'), createObject(format('{0}-{1}', join(take(split(lambdaVariables('item').key, '-'), sub(length(split(lambdaVariables('item').key, '-')), 1)), '-'), last(split(lambdaVariables('item').key, '-'))), lambdaVariables('item').value[0].backendId)))))]"
+            },
+            "poolDetails": {
+              "type": "array",
+              "metadata": {
+                "description": "Complete pool configurations including backend details"
+              },
+              "copy": {
+                "count": "[length(variables('poolConfigs'))]",
+                "input": {
+                  "operationName": "[variables('poolConfigs')[copyIndex()].operationName]",
+                  "apiVersion": "[variables('poolConfigs')[copyIndex()].apiVersion]",
+                  "poolName": "[variables('poolConfigs')[copyIndex()].poolName]",
+                  "poolType": "pool",
+                  "backends": "[variables('poolConfigs')[copyIndex()].backends]"
+                }
+              }
+            },
+            "policyFragmentConfig": {
+              "type": "object",
+              "metadata": {
+                "description": "Configuration for policy fragment generation"
+              },
+              "value": {
+                "backendPools": "[map(variables('poolConfigs'), lambda('config', createObject('poolName', lambdaVariables('config').poolName, 'apiVersion', lambdaVariables('config').apiVersion, 'supportedOperations', createArray(lambdaVariables('config').operationName))))]",
+                "directBackends": "[map(filter(items(variables('operationToBackendsMap')), lambda('item', equals(length(lambdaVariables('item').value), 1))), lambda('item', createObject('operationName', join(take(split(lambdaVariables('item').key, '-'), sub(length(split(lambdaVariables('item').key, '-')), 1)), '-'), 'apiVersion', last(split(lambdaVariables('item').key, '-')), 'poolName', lambdaVariables('item').value[0].backendId, 'supportedOperations', createArray(join(take(split(lambdaVariables('item').key, '-'), sub(length(split(lambdaVariables('item').key, '-')), 1)), '-')))))]"
+              }
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', parameters('apim').subscriptionId, parameters('apim').resourceGroupName), 'Microsoft.Resources/deployments', format('di-backends-deployment-{0}', uniqueString(deployment().name)))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "[format('di-policy-fragments-deployment-{0}', uniqueString(deployment().name))]",
+      "subscriptionId": "[parameters('apim').subscriptionId]",
+      "resourceGroup": "[parameters('apim').resourceGroupName]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "apimServiceName": {
+            "value": "[parameters('apim').name]"
+          },
+          "policyFragmentConfig": {
+            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', parameters('apim').subscriptionId, parameters('apim').resourceGroupName), 'Microsoft.Resources/deployments', format('di-backend-pools-deployment-{0}', uniqueString(deployment().name))), '2025-04-01').outputs.policyFragmentConfig.value]"
+          },
+          "managedIdentityClientId": {
+            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', parameters('apimManagedIdentity').subscriptionId, parameters('apimManagedIdentity').resourceGroupName), 'Microsoft.ManagedIdentity/userAssignedIdentities', parameters('apimManagedIdentity').name), '2023-01-31').clientId]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.39.26.7824",
+              "templateHash": "928224570550874836"
+            }
+          },
+          "parameters": {
+            "apimServiceName": {
+              "type": "string",
+              "metadata": {
+                "description": "Name of the API Management service"
+              }
+            },
+            "policyFragmentConfig": {
+              "type": "object",
+              "metadata": {
+                "description": "Policy fragment configuration from backend pools module"
+              }
+            },
+            "managedIdentityClientId": {
+              "type": "string",
+              "metadata": {
+                "description": "User-assigned managed identity client ID for authentication"
+              }
+            }
+          },
+          "variables": {
+            "copy": [
+              {
+                "name": "legacyBackendPoolsArray",
+                "count": "[length(variables('legacyPools'))]",
+                "input": "[replace(replace(replace('// Pool: POOLNAME\nvar pool_INDEX = new JObject()\n{\n    { \"name\", \"POOLNAME\" },\n    { \"location\", \"LOCATION\" },\n    { \"backend-id\", \"POOLNAME\" },\n    { \"priority\", 1},\n    { \"isThrottling\", false },\n    { \"retryAfter\", DateTime.MinValue }\n};\nroutes.Add(pool_INDEX);\n\nclusters.Add(new JObject()\n{\n    { \"deploymentName\", \"OPERATIONS\" },\n    { \"routes\", new JArray(pool_INDEX) }\n});', 'POOLNAME', variables('legacyPools')[copyIndex('legacyBackendPoolsArray')].poolName), 'INDEX', string(copyIndex('legacyBackendPoolsArray'))), 'OPERATIONS', join(variables('legacyPools')[copyIndex('legacyBackendPoolsArray')].supportedOperations, '\", \"'))]"
+              },
+              {
+                "name": "modernBackendPoolsArray",
+                "count": "[length(variables('modernPools'))]",
+                "input": "[replace(replace(replace('// Pool: POOLNAME\nvar pool_INDEX = new JObject()\n{\n    { \"name\", \"POOLNAME\" },\n    { \"location\", \"LOCATION\" },\n    { \"backend-id\", \"POOLNAME\" },\n    { \"priority\", 1},\n    { \"isThrottling\", false },\n    { \"retryAfter\", DateTime.MinValue }\n};\nroutes.Add(pool_INDEX);\n\nclusters.Add(new JObject()\n{\n    { \"deploymentName\", \"OPERATIONS\" },\n    { \"routes\", new JArray(pool_INDEX) }\n});', 'POOLNAME', variables('modernPools')[copyIndex('modernBackendPoolsArray')].poolName), 'INDEX', string(copyIndex('modernBackendPoolsArray'))), 'OPERATIONS', join(variables('modernPools')[copyIndex('modernBackendPoolsArray')].supportedOperations, '\", \"'))]"
+              }
+            ],
+            "allPools": "[union(parameters('policyFragmentConfig').backendPools, parameters('policyFragmentConfig').directBackends)]",
+            "legacyPools": "[filter(variables('allPools'), lambda('pool', equals(lambdaVariables('pool').apiVersion, 'legacy')))]",
+            "modernPools": "[filter(variables('allPools'), lambda('pool', equals(lambdaVariables('pool').apiVersion, 'modern')))]",
+            "legacyBackendPoolsCode": "[join(variables('legacyBackendPoolsArray'), '\n')]",
+            "modernBackendPoolsCode": "[join(variables('modernBackendPoolsArray'), '\n')]",
+            "setBackendPoolsLegacyFragmentTemplate": "<fragment>\r\n    <set-variable name=\"oaClusters\" value=\"@{\r\n        // route is an Azure Document Intelligence endpoint\r\n        JArray routes = new JArray();\r\n\r\n        // cluster is a group of routes that are capable of serving a specific operation\r\n        JArray clusters = new JArray();\r\n\r\n        // Update the below if condition when using multiple APIM gateway regions/SHGW to get different configurations for each region\r\n        if(context.Deployment.Region == \"ALL\" || true)\r\n        {\r\n            // Adding all Azure Document Intelligence endpoints routes (which are set as APIM Backend)\r\n            // The following code is dynamically generated based on backend pool configuration\r\n            //{backendPoolsCode}\r\n        }\r\n        else\r\n        {\r\n            //No clusters found for selected region, either return error (default behavior) or set default cluster in the else section\r\n        }\r\n        \r\n        return clusters;   \r\n    }\" />\r\n    <!-- Add cluster configurations to cache -->\r\n    <cache-store-value key=\"@((string)context.Variables.GetValueOrDefault<string>(\"oaClustersCacheKey\", \"ALL-DOCINTELL-LEGACY\"))\" value=\"@((JArray)context.Variables[\"oaClusters\"])\" duration=\"86400\" />\r\n</fragment>\r\n",
+            "setBackendPoolsModernFragmentTemplate": "<fragment>\r\n    <set-variable name=\"oaClusters\" value=\"@{\r\n        // route is an Azure Document Intelligence endpoint\r\n        JArray routes = new JArray();\r\n\r\n        // cluster is a group of routes that are capable of serving a specific operation\r\n        JArray clusters = new JArray();\r\n\r\n        // Update the below if condition when using multiple APIM gateway regions/SHGW to get different configurations for each region\r\n        if(context.Deployment.Region == \"ALL\" || true)\r\n        {\r\n            // Adding all Azure Document Intelligence endpoints routes (which are set as APIM Backend)\r\n            // The following code is dynamically generated based on backend pool configuration\r\n            //{backendPoolsCode}\r\n        }\r\n        else\r\n        {\r\n            //No clusters found for selected region, either return error (default behavior) or set default cluster in the else section\r\n        }\r\n        \r\n        return clusters;   \r\n    }\" />\r\n    <!-- Add cluster configurations to cache -->\r\n    <cache-store-value key=\"@((string)context.Variables.GetValueOrDefault<string>(\"oaClustersCacheKey\", \"ALL-DOCINTELL-MODERN\"))\" value=\"@((JArray)context.Variables[\"oaClusters\"])\" duration=\"86400\" />\r\n</fragment>\r\n",
+            "setBackendAuthorizationFragmentXml": "<fragment>\r\n    <!-- Authenticate using managed identity -->\r\n    <authentication-managed-identity \r\n        resource=\"https://cognitiveservices.azure.com\" \r\n        output-token-variable-name=\"msi-access-token\" \r\n        client-id=\"{{uami-client-id}}\" \r\n        ignore-error=\"false\" />\r\n    <!-- Set Authorization header with the obtained token -->\r\n    <set-header name=\"Authorization\" exists-action=\"override\">\r\n        <value>@(\"Bearer \" + (string)context.Variables[\"msi-access-token\"])</value>\r\n    </set-header>\r\n</fragment>\r\n",
+            "setTargetBackendPoolFragmentXml": "<fragment>\r\n    <!-- Set deployment-id based on modelId or classifierId from URL parameters -->\r\n    <set-variable name=\"deployment-id\" value=\"@{\r\n        var modelId = context.Request.MatchedParameters.GetValueOrDefault(\"modelId\", \"\");\r\n        var classifierId = context.Request.MatchedParameters.GetValueOrDefault(\"classifierId\", \"\");\r\n        \r\n        if (!string.IsNullOrEmpty(modelId))\r\n        {\r\n            return modelId;\r\n        }\r\n        else if (!string.IsNullOrEmpty(classifierId))\r\n        {\r\n            return classifierId;\r\n        }\r\n        else\r\n        {\r\n            return \"Document-Intelligence\";\r\n        }\r\n    }\" />\r\n    \r\n    <!-- Set cache keys for routes and clusters -->\r\n    <set-variable name=\"routesCacheKey\" value=\"@((string)context.Variables[\"deployment-id\"] + \"Routes\" + context.Deployment.Region + context.Api.Revision)\" />\r\n    <set-variable name=\"oaClustersCacheKey\" value=\"@(\"aiDocIntelInstance\" + context.Deployment.Region + context.Api.Revision)\" />\r\n    \r\n    <!-- Attempt to load cached cluster configuration -->\r\n    <cache-lookup-value key=\"@((string)context.Variables.GetValueOrDefault<string>(\"oaClustersCacheKey\", \"ALL-DOCINTELL\"))\" variable-name=\"oaClusters\" />\r\n</fragment>\r\n",
+            "updatedSetBackendPoolsLegacyFragmentXml": "[replace(variables('setBackendPoolsLegacyFragmentTemplate'), '//{backendPoolsCode}', variables('legacyBackendPoolsCode'))]",
+            "updatedSetBackendPoolsModernFragmentXml": "[replace(variables('setBackendPoolsModernFragmentTemplate'), '//{backendPoolsCode}', variables('modernBackendPoolsCode'))]"
+          },
+          "resources": [
+            {
+              "type": "Microsoft.ApiManagement/service/namedValues",
+              "apiVersion": "2024-06-01-preview",
+              "name": "[format('{0}/{1}', parameters('apimServiceName'), 'uami-client-id')]",
+              "properties": {
+                "displayName": "uami-client-id",
+                "value": "[parameters('managedIdentityClientId')]",
+                "secret": false
+              }
+            },
+            {
+              "type": "Microsoft.ApiManagement/service/policyFragments",
+              "apiVersion": "2024-06-01-preview",
+              "name": "[format('{0}/{1}', parameters('apimServiceName'), 'set-di-backend-pools-legacy')]",
+              "properties": {
+                "description": "Dynamically generated backend pool configurations for Document Intelligence routing (Legacy API: /formrecognizer)",
+                "format": "rawxml",
+                "value": "[variables('updatedSetBackendPoolsLegacyFragmentXml')]"
+              }
+            },
+            {
+              "type": "Microsoft.ApiManagement/service/policyFragments",
+              "apiVersion": "2024-06-01-preview",
+              "name": "[format('{0}/{1}', parameters('apimServiceName'), 'set-di-backend-pools-modern')]",
+              "properties": {
+                "description": "Dynamically generated backend pool configurations for Document Intelligence routing (Modern API: /documentintelligence)",
+                "format": "rawxml",
+                "value": "[variables('updatedSetBackendPoolsModernFragmentXml')]"
+              }
+            },
+            {
+              "type": "Microsoft.ApiManagement/service/policyFragments",
+              "apiVersion": "2024-06-01-preview",
+              "name": "[format('{0}/{1}', parameters('apimServiceName'), 'set-di-backend-authorization')]",
+              "properties": {
+                "description": "Authentication configuration for Document Intelligence backends",
+                "format": "rawxml",
+                "value": "[variables('setBackendAuthorizationFragmentXml')]"
+              }
+            },
+            {
+              "type": "Microsoft.ApiManagement/service/policyFragments",
+              "apiVersion": "2024-06-01-preview",
+              "name": "[format('{0}/{1}', parameters('apimServiceName'), 'set-target-di-backend-pool')]",
+              "properties": {
+                "description": "Target backend selection logic for Document Intelligence operations",
+                "format": "rawxml",
+                "value": "[variables('setTargetBackendPoolFragmentXml')]"
+              }
+            }
+          ],
+          "outputs": {
+            "setBackendPoolsLegacyFragmentName": {
+              "type": "string",
+              "metadata": {
+                "description": "Name of the set backend pools fragment for legacy API"
+              },
+              "value": "set-di-backend-pools-legacy"
+            },
+            "setBackendPoolsModernFragmentName": {
+              "type": "string",
+              "metadata": {
+                "description": "Name of the set backend pools fragment for modern API"
+              },
+              "value": "set-di-backend-pools-modern"
+            },
+            "setBackendPoolsFragmentName": {
+              "type": "string",
+              "metadata": {
+                "description": "Name of the set backend pools fragment (defaults to modern)"
+              },
+              "value": "set-di-backend-pools-modern"
+            },
+            "setBackendAuthorizationFragmentName": {
+              "type": "string",
+              "metadata": {
+                "description": "Name of the set backend authorization fragment"
+              },
+              "value": "set-di-backend-authorization"
+            },
+            "setTargetBackendPoolFragmentName": {
+              "type": "string",
+              "metadata": {
+                "description": "Name of the set target backend pool fragment"
+              },
+              "value": "set-target-di-backend-pool"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', parameters('apim').subscriptionId, parameters('apim').resourceGroupName), 'Microsoft.Resources/deployments', format('di-backend-pools-deployment-{0}', uniqueString(deployment().name)))]"
+      ]
+    }
+  ],
+  "outputs": {
+    "apimServiceName": {
+      "type": "string",
+      "metadata": {
+        "description": "Name of the APIM service"
+      },
+      "value": "[parameters('apim').name]"
+    },
+    "apimGatewayUrl": {
+      "type": "string",
+      "metadata": {
+        "description": "Gateway URL for the APIM service"
+      },
+      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', parameters('apim').subscriptionId, parameters('apim').resourceGroupName), 'Microsoft.ApiManagement/service', parameters('apim').name), '2024-06-01-preview').gatewayUrl]"
+    },
+    "backendIds": {
+      "type": "array",
+      "metadata": {
+        "description": "Array of created backend IDs"
+      },
+      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', parameters('apim').subscriptionId, parameters('apim').resourceGroupName), 'Microsoft.Resources/deployments', format('di-backends-deployment-{0}', uniqueString(deployment().name))), '2025-04-01').outputs.backendIds.value]"
+    },
+    "poolNames": {
+      "type": "array",
+      "metadata": {
+        "description": "Array of created backend pool names"
+      },
+      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', parameters('apim').subscriptionId, parameters('apim').resourceGroupName), 'Microsoft.Resources/deployments', format('di-backend-pools-deployment-{0}', uniqueString(deployment().name))), '2025-04-01').outputs.poolNames.value]"
+    },
+    "operationToPoolMap": {
+      "type": "object",
+      "metadata": {
+        "description": "Mapping of operations to their backend pools"
+      },
+      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', parameters('apim').subscriptionId, parameters('apim').resourceGroupName), 'Microsoft.Resources/deployments', format('di-backend-pools-deployment-{0}', uniqueString(deployment().name))), '2025-04-01').outputs.operationToPoolMap.value]"
+    },
+    "operationToBackendMap": {
+      "type": "object",
+      "metadata": {
+        "description": "Mapping of operations to direct backends (single-backend operations)"
+      },
+      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', parameters('apim').subscriptionId, parameters('apim').resourceGroupName), 'Microsoft.Resources/deployments', format('di-backend-pools-deployment-{0}', uniqueString(deployment().name))), '2025-04-01').outputs.operationToBackendMap.value]"
+    },
+    "supportedOperations": {
+      "type": "array",
+      "metadata": {
+        "description": "All supported operations across all backends"
+      },
+      "value": "[union(createArray(), reduce(parameters('diBackendConfig'), createArray(), lambda('acc', 'config', union(lambdaVariables('acc'), map(lambdaVariables('config').supportedOperations, lambda('op', lambdaVariables('op').name))))))]"
+    },
+    "policyFragments": {
+      "type": "object",
+      "metadata": {
+        "description": "Policy fragment names"
+      },
+      "value": {
+        "setBackendPools": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', parameters('apim').subscriptionId, parameters('apim').resourceGroupName), 'Microsoft.Resources/deployments', format('di-policy-fragments-deployment-{0}', uniqueString(deployment().name))), '2025-04-01').outputs.setBackendPoolsFragmentName.value]",
+        "setBackendAuthorization": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', parameters('apim').subscriptionId, parameters('apim').resourceGroupName), 'Microsoft.Resources/deployments', format('di-policy-fragments-deployment-{0}', uniqueString(deployment().name))), '2025-04-01').outputs.setBackendAuthorizationFragmentName.value]",
+        "setTargetBackendPool": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', parameters('apim').subscriptionId, parameters('apim').resourceGroupName), 'Microsoft.Resources/deployments', format('di-policy-fragments-deployment-{0}', uniqueString(deployment().name))), '2025-04-01').outputs.setTargetBackendPoolFragmentName.value]"
+      }
+    }
+  }
+}

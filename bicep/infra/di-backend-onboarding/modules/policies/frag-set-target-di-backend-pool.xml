@@ -1,0 +1,27 @@
+<fragment>
+    <!-- Set deployment-id based on modelId or classifierId from URL parameters -->
+    <set-variable name="deployment-id" value="@{
+        var modelId = context.Request.MatchedParameters.GetValueOrDefault("modelId", "");
+        var classifierId = context.Request.MatchedParameters.GetValueOrDefault("classifierId", "");
+        
+        if (!string.IsNullOrEmpty(modelId))
+        {
+            return modelId;
+        }
+        else if (!string.IsNullOrEmpty(classifierId))
+        {
+            return classifierId;
+        }
+        else
+        {
+            return "Document-Intelligence";
+        }
+    }" />
+    
+    <!-- Set cache keys for routes and clusters -->
+    <set-variable name="routesCacheKey" value="@((string)context.Variables["deployment-id"] + "Routes" + context.Deployment.Region + context.Api.Revision)" />
+    <set-variable name="oaClustersCacheKey" value="@("aiDocIntelInstance" + context.Deployment.Region + context.Api.Revision)" />
+    
+    <!-- Attempt to load cached cluster configuration -->
+    <cache-lookup-value key="@((string)context.Variables.GetValueOrDefault<string>("oaClustersCacheKey", "ALL-DOCINTELL"))" variable-name="oaClusters" />
+</fragment>
