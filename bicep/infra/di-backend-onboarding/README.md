@@ -33,36 +33,74 @@ This package enables dynamic Document Intelligence backend routing without manua
 
 ## Quick Start
 
-### 1. Copy the Parameter Template
+### Deployment Workflow
+
+The DI backend onboarding process involves coordinating with the main APIM deployment to ensure policy fragments exist before policies reference them. This workflow provides a repeatable, failure-free deployment process.
+
+#### Prerequisites
+
+- Main AI Hub Gateway deployment completed (`azd up`)
+- Document Intelligence endpoints deployed and accessible
+- Parameter files updated with actual endpoint URLs
+
+### Step-by-Step Deployment
+
+#### Step 1: Initial APIM Deployment
+
+Deploy the main infrastructure which creates APIM and Document Intelligence resources:
+
+```powershell
+azd up
+```
+
+✅ **Success**: Creates APIM service, Document Intelligence API with inline policy (no fragments)
+
+**Note**: The initial deployment uses `doc-intelligence-api-policy.xml` which contains inline backend configuration. Policy fragments don't exist yet, so the policy doesn't reference them.
+
+#### Step 2: Get Document Intelligence Endpoint URLs
+
+After the main deployment completes, retrieve the Document Intelligence endpoint URLs:
+
+```powershell
+# List all Document Intelligence resources in your resource group
+az cognitiveservices account list --resource-group <rg-name> --query "[?kind=='FormRecognizer'].{name:name,endpoint:properties.endpoint}" -o table
+
+# Or get specific endpoint
+az cognitiveservices account show --name <di-service-name> --resource-group <rg-name> --query properties.endpoint -o tsv
+```
+
+Copy these endpoint URLs for use in the next step.
+
+#### Step 3: Configure Backend Parameters
+
+Create and configure your backend parameter file:
 
 ```bash
 cp main.bicepparam di-backends-dev-local.bicepparam
 ```
 
-### 2. Configure Your Backends
-
-Edit `di-backends-dev-local.bicepparam`:
+Edit `di-backends-dev-local.bicepparam` with your actual values:
 
 ```bicep
 using 'main.bicep'
 
 param apim = {
-  subscriptionId: '00000000-0000-0000-0000-000000000000' // Replace with your subscription ID
-  resourceGroupName: 'rg-citadel-governance-hub'         // Replace with your APIM resource group
-  name: 'apim-citadel-governance-hub'                    // Replace with your APIM name
+  subscriptionId: '00000000-0000-0000-0000-000000000000'  // Replace with your subscription ID
+  resourceGroupName: 'rg-ai-hub-citadel-dev'              // Replace with your APIM resource group
+  name: 'apim-citadel-hub'                                // Replace with your APIM name
 }
 
 param apimManagedIdentity = {
-  subscriptionId: '00000000-0000-0000-0000-000000000000' // Replace with your subscription ID
-  resourceGroupName: 'rg-citadel-governance-hub'         // Replace with your identity resource group
-  name: 'id-apim-citadel'                                // Replace with your managed identity name
+  subscriptionId: '00000000-0000-0000-0000-000000000000'  // Replace with your subscription ID
+  resourceGroupName: 'rg-ai-hub-citadel-dev'              // Replace with your identity resource group
+  name: 'id-apim-citadel'                                 // Replace with your managed identity name
 }
 
 param diBackendConfig = [
   {
-    backendId: 'di-eastus-primary'
-    endpoint: 'https://my-di-eastus.cognitiveservices.azure.com/'
-    location: 'eastus'
+    backendId: 'di-swedencentral-primary'
+    endpoint: 'https://my-di-swedencentral.cognitiveservices.azure.com/'  // Replace with actual endpoint from Step 2
+    location: 'swedencentral'
     authScheme: 'managedIdentity'
     supportedOperations: [
       { name: 'prebuilt-read', capability: 'OCR and Text Extraction' }
@@ -70,22 +108,86 @@ param diBackendConfig = [
       { name: 'prebuilt-invoice', capability: 'Invoice Processing' }
       { name: 'prebuilt-receipt', capability: 'Receipt Processing' }
     ]
-    apiVersions: ['legacy', 'modern']
+    apiVersions: ['modern']  // or ['legacy', 'modern'] for both
     priority: 1
     weight: 100
   }
 ]
 ```
 
-### 3. Deploy
+**Important**: Use the actual endpoint URLs retrieved in Step 2.
 
-```bash
-az deployment sub create \
-  --name di-backend-onboarding \
-  --location eastus \
-  --template-file main.bicep \
-  --parameters di-backends-dev-local.bicepparam
+#### Step 4: Deploy DI Backend Onboarding
+
+Deploy the backend configuration to create backends, pools, and policy fragments:
+
+```powershell
+az deployment sub create `
+  --location swedencentral `
+  --template-file bicep/infra/di-backend-onboarding/main.bicep `
+  --parameters bicep/infra/di-backend-onboarding/di-backends-dev-local.bicepparam
 ```
+
+✅ **Success**: Creates APIM backends, backend pools, and policy fragments
+
+**What gets created:**
+- APIM Backend resources (e.g., `di-primary-modern`, `di-secondary-legacy`)
+- Backend pools for multi-backend operations (e.g., `prebuilt-read-modern-backend-pool`)
+- Policy fragments with dynamic routing logic:
+  - `set-di-backend-pools-modern`
+  - `set-di-backend-pools-legacy` (if legacy API versions configured)
+  - `set-di-backend-authorization`
+  - `set-target-di-backend-pool`
+
+#### Step 5: Switch to Fragment-Based Policy
+
+Now that policy fragments exist, update the Document Intelligence API policy to use them:
+
+```powershell
+# Copy the fragment-based policy to become the active policy
+Copy-Item bicep/infra/modules/apim/policies/doc-intelligence-api-policy-fragments.xml `
+          bicep/infra/modules/apim/policies/doc-intelligence-api-policy.xml -Force
+```
+
+**Policy Files Structure:**
+- `doc-intelligence-api-policy.xml` - **Active policy** (deployed to APIM)
+- `doc-intelligence-api-policy-fragments.xml` - Fragment-based version (uses include-fragment directives)
+- `doc-intelligence-api-policy-no-fragments.xml` - Inline version (preserved for reference/rollback)
+
+#### Step 6: Deploy Updated Policy
+
+Apply the fragment-based policy to APIM:
+
+```powershell
+azd up
+```
+
+✅ **Success**: Updates Document Intelligence API policy to use policy fragments
+
+The policy now uses dynamic backend routing based on your configuration!
+
+### Rollback to Inline Policy
+
+If you need to revert to the inline policy (no fragments):
+
+```powershell
+# Restore the inline policy
+Copy-Item bicep/infra/modules/apim/policies/doc-intelligence-api-policy-no-fragments.xml `
+          bicep/infra/modules/apim/policies/doc-intelligence-api-policy.xml -Force
+
+# Deploy the change
+azd up
+```
+
+### Updating Backend Configuration
+
+To add, remove, or modify backends:
+
+1. **Edit your parameter file** (`di-backends-dev-local.bicepparam`)
+2. **Redeploy DI backend onboarding** (Step 4)
+3. **No policy changes needed** - Policy fragments are automatically regenerated
+
+Policy fragments will be updated with the new backend configuration, and APIM will pick up the changes automatically (cached for 24 hours).
 
 ## Configuration Reference
 
@@ -270,38 +372,66 @@ All backends use managed identity authentication:
 
 ## Policy Fragment Integration
 
-After deployment, the following policy fragments are available:
+After deployment (Step 4), the following policy fragments are created in APIM:
 
-| Fragment Name | Purpose | Usage |
-|---------------|---------|-------|
-| `set-di-backend-pools-legacy` | Defines backend pools for legacy API | Include in legacy API policy |
-| `set-di-backend-pools-modern` | Defines backend pools for modern API | Include in modern API policy |
-| `set-di-backend-authorization` | Sets up managed identity auth | Include in both API policies |
-| `set-target-di-backend-pool` | Selects target backend | Include in both API policies |
+| Fragment Name | Purpose | API Version |
+|---------------|---------|-------------|
+| `set-di-backend-pools-legacy` | Defines backend pools for legacy API | `/formrecognizer` |
+| `set-di-backend-pools-modern` | Defines backend pools for modern API | `/documentintelligence` |
+| `set-di-backend-authorization` | Sets up managed identity authentication | Both |
+| `set-target-di-backend-pool` | Extracts operation from request and sets cache keys | Both |
 
-### Example: Updating Existing API Policy
+### Policy File Structure
 
-To use the newly created backend pools, update your Document Intelligence API policy:
+The repository contains three policy files for the Document Intelligence API:
+
+| File | Purpose | When Used |
+|------|---------|-----------|
+| `doc-intelligence-api-policy.xml` | **Active policy** deployed to APIM | Always deployed by `azd up` |
+| `doc-intelligence-api-policy-fragments.xml` | Fragment-based policy template | Copy to active policy in Step 5 |
+| `doc-intelligence-api-policy-no-fragments.xml` | Inline policy template (no fragments) | Preserved for rollback/reference |
+
+### Fragment-Based Policy Structure
+
+After Step 5, the active policy uses this structure:
 
 ```xml
 <policies>
     <inbound>
         <base />
-        <!-- Include fragment for target backend selection -->
+        <!--
+            Document Intelligence API Policy (Modern API: /documentintelligence)
+            Purpose: Routes requests to appropriate Document Intelligence backends based on operation and availability
+            
+            Flow:
+            1. Validate Entra ID authentication (optional, controlled by entra-validate named value)
+            2. Extract and validate operation parameter (modelId/classifierId) from request
+            3. Configure backend pools and routing rules (dynamically generated from DI backend onboarding)
+            4. Determine target backend based on operation and availability
+            5. Set up managed identity authentication and route to selected backend
+            6. Collect usage metrics for monitoring and billing
+        -->
+        
+        <!-- Step 1: Validate Entra ID authentication (if enabled) -->
+        <include-fragment fragment-id="aad-auth" />
+        
+        <!-- Remove api-key header to prevent it from being passed to backend endpoints -->
+        <set-header name="api-key" exists-action="delete" />
+        
+        <!-- Step 2: Extract and validate operation parameter from request -->
         <include-fragment fragment-id="set-target-di-backend-pool" />
         
-        <!-- Load backend pools if not cached -->
+        <!-- Step 3: Load backend pool configurations (if not cached) -->
         <choose>
             <when condition="@(context.Variables.ContainsKey("oaClusters") == false)">
-                <!-- Include generated backend pools for modern API -->
                 <include-fragment fragment-id="set-di-backend-pools-modern" />
             </when>
         </choose>
         
-        <!-- Validate routes -->
+        <!-- Step 4: Validate routes and select available backend -->
         <include-fragment fragment-id="validate-routes" />
         
-        <!-- Set up authentication -->
+        <!-- Step 5: Configure managed identity authentication and route to selected backend -->
         <include-fragment fragment-id="set-di-backend-authorization" />
     </inbound>
     <backend>
@@ -313,6 +443,24 @@ To use the newly created backend pools, update your Document Intelligence API po
     </outbound>
 </policies>
 ```
+
+### How Policy Fragments Work
+
+1. **`set-target-di-backend-pool`**: Extracts `modelId` or `classifierId` from request URL parameters to determine the operation (e.g., "prebuilt-invoice")
+
+2. **`set-di-backend-pools-modern`**: Dynamically generates C# code that creates backend pool configurations:
+   - Lists all available backends for each operation
+   - Includes location, priority, and weight information
+   - Caches configuration for 24 hours
+
+3. **`validate-routes`**: Checks backend health and selects the best available backend based on:
+   - Circuit breaker state (skips backends in failure state)
+   - Priority (lower number = higher priority)
+   - Weight (for load balancing across same-priority backends)
+
+4. **`set-di-backend-authorization`**: Obtains managed identity token and sets Authorization header
+
+5. **`backend-routing`**: Routes the request to the selected backend
 
 ## Deployment Outputs
 
@@ -331,14 +479,46 @@ After successful deployment, the following outputs are available:
 
 ## Troubleshooting
 
+### Deployment Fails: "Policy fragment could not be found"
+
+**Symptom**: `azd up` fails with error:
+```
+ValidationError: Error in element 'include-fragment' on line 29, column 10: 
+Policy fragment with id 'set-target-di-backend-pool' could not be found.
+```
+
+**Root Cause**: The active policy (`doc-intelligence-api-policy.xml`) is trying to use policy fragments that don't exist yet.
+
+**Solution**: Follow the correct deployment order:
+1. Ensure Step 1 completes successfully (uses inline policy, no fragments)
+2. Complete Steps 2-4 to create the policy fragments
+3. Then proceed with Step 5 to switch to fragment-based policy
+
+If you're at this error state:
+```powershell
+# Revert to inline policy
+Copy-Item bicep/infra/modules/apim/policies/doc-intelligence-api-policy-no-fragments.xml `
+          bicep/infra/modules/apim/policies/doc-intelligence-api-policy.xml -Force
+
+# Deploy successfully
+azd up
+
+# Then continue from Step 4
+```
+
 ### Backend Not Found
 
 **Symptom**: API returns 404 or backend not found error
 
 **Solution**:
-1. Verify backend was created: `az apim backend list --resource-group <rg> --service-name <apim>`
+1. Verify backend was created:
+   ```powershell
+   az apim backend list --resource-group <rg> --service-name <apim> -o table
+   ```
 2. Check backend ID matches expected pattern: `{backendId}-{apiVersion}`
+   - Example: `di-primary-modern`, `di-secondary-legacy`
 3. Ensure API version specified in request matches deployed backends
+4. Verify the operation is in `supportedOperations` for at least one backend
 
 ### Authentication Errors
 
@@ -346,15 +526,33 @@ After successful deployment, the following outputs are available:
 
 **Solution**:
 1. Verify managed identity has `Cognitive Services User` role:
-   ```bash
-   az role assignment list --assignee <managed-identity-principal-id> --scope /subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.CognitiveServices/accounts/<di-name>
+   ```powershell
+   az role assignment list --assignee <managed-identity-principal-id> `
+     --scope /subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.CognitiveServices/accounts/<di-name>
    ```
 2. If missing, assign the role:
-   ```bash
-   az role assignment create \
-     --assignee <managed-identity-principal-id> \
-     --role "Cognitive Services User" \
+   ```powershell
+   az role assignment create `
+     --assignee <managed-identity-principal-id> `
+     --role "Cognitive Services User" `
      --scope /subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.CognitiveServices/accounts/<di-name>
+   ```
+3. The managed identity principal ID can be found:
+   ```powershell
+   az identity show --name <identity-name> --resource-group <rg> --query principalId -o tsv
+   ```
+
+### Policy Not Updated After Backend Changes
+
+**Symptom**: Made changes to backends but policy still uses old configuration
+
+**Solution**:
+1. Policy fragments cache backend pools for 24 hours
+2. Clear the cache by restarting APIM or waiting for expiry
+3. Or redeploy the policy fragments (re-run Step 4)
+4. Verify policy fragment was updated:
+   ```powershell
+   az apim policy fragment show --resource-group <rg> --service-name <apim> --policy-fragment-id set-di-backend-pools-modern
    ```
 
 ### Load Balancing Not Working
@@ -362,10 +560,14 @@ After successful deployment, the following outputs are available:
 **Symptom**: All requests go to same backend
 
 **Solution**:
-1. Verify multiple backends support the same operation
-2. Check backend pool was created: Look for pool name in outputs
-3. Ensure priority and weight values are set correctly
-4. Clear APIM cache: Policy fragments cache backend pools for 24 hours
+1. Verify multiple backends support the same operation in your parameter file
+2. Check backend pool was created:
+   ```powershell
+   az apim backend list --resource-group <rg> --service-name <apim> --query "[?properties.type=='Pool']" -o table
+   ```
+3. Ensure priority and weight values are set correctly (priority 1 = highest)
+4. Check if backends are in same priority tier (load balancing only happens within same priority)
+5. Clear APIM cache: Policy fragments cache backend pools for 24 hours
 
 ### Circuit Breaker Issues
 
@@ -375,6 +577,8 @@ After successful deployment, the following outputs are available:
 1. Review circuit breaker settings (3 failures in 5 minutes triggers 1-minute break)
 2. Adjust thresholds if needed by modifying `configureCircuitBreaker` parameter
 3. Check backend health and resolve underlying issues
+4. Verify network connectivity from APIM to backend endpoints
+5. Check Document Intelligence service quotas and limits
 
 ## Best Practices
 
@@ -416,9 +620,57 @@ If you have manually configured Document Intelligence backends:
 2. **Create parameter file**: Convert manual configuration to `.bicepparam` format
 3. **Test in non-production**: Deploy to development environment first
 4. **Verify routing**: Ensure all operations route correctly
-5. **Update API policies**: Replace hardcoded backend references with policy fragments
+5. **Update API policies**: Use the 6-step deployment process above
+   - Keep existing inline policy for Step 1
+   - Deploy DI backend onboarding (Steps 2-4)
+   - Switch to fragment-based policy (Steps 5-6)
 6. **Deploy to production**: Roll out during maintenance window
 7. **Clean up old backends**: Remove manually created backends after verification
+
+### Important Notes for Migration
+
+- **No downtime required**: The inline policy continues working during Steps 1-4
+- **Policy fragments coexist**: Old hardcoded backends and new policy fragments can coexist temporarily
+- **Gradual rollout**: Test fragment-based routing in dev before production
+- **Rollback available**: Use `doc-intelligence-api-policy-no-fragments.xml` to revert if needed
+
+## Common Deployment Patterns
+
+### Pattern 1: Fresh Deployment (No Existing Backends)
+
+Use the standard 6-step process as documented above. This is the cleanest approach.
+
+### Pattern 2: Existing APIM, Adding DI Backends
+
+If your APIM is already deployed without Document Intelligence backends:
+
+1. **Skip Step 1** (APIM already exists)
+2. **Start from Step 2**: Get DI endpoint URLs
+3. **Continue Steps 3-6**: Deploy backends and update policy
+
+### Pattern 3: Iterative Backend Updates
+
+After initial deployment, to add/modify backends:
+
+1. **Edit parameter file**: Update `di-backends-dev-local.bicepparam`
+2. **Redeploy Step 4**: 
+   ```powershell
+   az deployment sub create --location swedencentral --template-file bicep/infra/di-backend-onboarding/main.bicep --parameters bicep/infra/di-backend-onboarding/di-backends-dev-local.bicepparam
+   ```
+3. **No policy changes needed**: Policy fragments auto-update
+4. **Wait for cache expiry**: 24 hours, or clear APIM cache manually
+
+### Pattern 4: Multi-Environment Deployment
+
+For dev/test/prod environments:
+
+1. **Create environment-specific parameter files**:
+   - `di-backends-dev.bicepparam`
+   - `di-backends-test.bicepparam`
+   - `di-backends-prod.bicepparam`
+2. **Deploy to each environment**: Use appropriate parameter file
+3. **Maintain separate policies**: Each environment gets its own policy fragments
+4. **Promote gradually**: Dev → Test → Prod
 
 ## Support and Feedback
 
