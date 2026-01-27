@@ -1,0 +1,14 @@
+[project]
+name = "ai-hub-gateway-solution-accelerator"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "azure-identity>=1.25.1",
+    "azure-mgmt-apimanagement>=5.0.0",
+    "ipykernel>=7.1.0",
+    "matplotlib>=3.10.8",
+    "openai>=2.15.0",
+    "requests>=2.32.5",
+]

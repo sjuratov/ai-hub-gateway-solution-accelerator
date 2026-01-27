@@ -1,0 +1,6 @@
+ipykernel
+requests
+azure-identity
+azure-mgmt-apimanagement
+matplotlib
+openai
