@@ -9,6 +9,7 @@
 *.user
 *.userosscache
 *.sln.docstates
+ai-hub-gateway-solution-accelerator.sln
 
 # User-specific files (MonoDevelop/Xamarin Studio)
 *.userprefs
