@@ -144,6 +144,7 @@ param languageServiceSkuName = readEnvironmentVariable('LANGUAGE_SERVICE_SKU_NAM
 param aiContentSafetySkuName = readEnvironmentVariable('AI_CONTENT_SAFETY_SKU_NAME', 'S0')
 param apicSku = readEnvironmentVariable('APIC_SKU', 'Free')
 param keyVaultSkuName = readEnvironmentVariable('KEY_VAULT_SKU_NAME', 'standard')
+param keyVaultEnablePurgeProtection = bool(readEnvironmentVariable('KEY_VAULT_ENABLE_PURGE_PROTECTION', 'true'))
 param redisSkuName = readEnvironmentVariable('REDIS_SKU_NAME', 'Balanced_B1')
 param redisSkuCapacity = int(readEnvironmentVariable('REDIS_SKU_CAPACITY', '2'))
 

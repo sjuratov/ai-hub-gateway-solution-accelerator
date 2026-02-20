@@ -416,4 +416,3 @@ local/**/*
 infra/usecase-onboarding/samples/financial-assistant-usecase-local.sh
 **/*local.bicepparam
 **/.temp/*
-Testing/*

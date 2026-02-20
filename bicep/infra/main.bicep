@@ -319,6 +319,9 @@ param apicSku string = 'Free'
 @allowed(['standard', 'premium'])
 param keyVaultSkuName string = 'standard'
 
+@description('Enable purge protection for the Key Vault service.')
+param keyVaultEnablePurgeProtection bool = true
+
 @description('Redis Enterprise / Azure Managed Redis SKU name. Allowed values align to Microsoft.Cache/redisEnterprise@2025-07-01.')
 @allowed([
   'Enterprise_E1'
@@ -864,6 +867,7 @@ module keyVault './modules/keyvault/keyvault.bicep' = {
     location: location
     tags: tags
     skuName: keyVaultSkuName
+    enablePurgeProtection: keyVaultEnablePurgeProtection
     publicNetworkAccess: keyVaultExternalNetworkAccess
     vNetName: useExistingVnet ? vnetExisting.outputs.vnetName : vnet.outputs.vnetName
     privateEndpointSubnetName: useExistingVnet ? vnetExisting.outputs.privateEndpointSubnetName : vnet.outputs.privateEndpointSubnetName
